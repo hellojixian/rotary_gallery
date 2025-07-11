@@ -26,6 +26,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
   const [dragProgress, setDragProgress] = useState(0); // 拖拽进度 0-1
   const [isDragActive, setIsDragActive] = useState(false);
   const [dragStartImageIndex, setDragStartImageIndex] = useState(0); // 拖拽开始时的图片索引
+  const [isAltPressed, setIsAltPressed] = useState(false); // Alt键是否按下
 
   // 预加载相关状态
   const [preloadedImages, setPreloadedImages] = useState<PreloadedImage[]>([]);
@@ -124,7 +125,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
     if (isPlaying && allImagesLoaded) {
       intervalRef.current = setInterval(() => {
         setCurrentImageIndex((prev) => (prev + 1) % totalImages);
-      }, 50);
+      }, 100);
     } else {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -141,9 +142,15 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
 
 
 
-  // 键盘控制
+  // 键盘控制和Ctrl键检测
   useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 检测Alt键状态
+      if (e.key === 'Alt') {
+        setIsAltPressed(true);
+        return;
+      }
+
       // 如果图片还没有预加载完成，只允许跳过预加载的快捷键
       if (!allImagesLoaded) {
         if (e.key === 'Escape') {
@@ -151,6 +158,33 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
           // 跳过预加载，直接显示第一张图片
           setAllImagesLoaded(true);
           setLoadingProgress(100);
+        }
+        return;
+      }
+
+      // 处理Ctrl+组合键
+      if (e.ctrlKey) {
+        switch (e.key) {
+          case '=':
+          case '+':
+            e.preventDefault();
+            // Ctrl+加号：放大
+            setScale(prev => Math.min(3, prev * 1.2));
+            break;
+          case '-':
+            e.preventDefault();
+            // Ctrl+减号：缩小
+            const newScale = Math.max(0.5, scale * 0.8);
+            setScale(newScale);
+            if (newScale <= 1) {
+              setPosition({ x: 0, y: 0 });
+            }
+            break;
+          case '0':
+            e.preventDefault();
+            // Ctrl+0：重置缩放
+            resetZoom();
+            break;
         }
         return;
       }
@@ -172,8 +206,20 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
       }
     };
 
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
+    const handleKeyUp = (e: KeyboardEvent) => {
+      // 检测Alt键释放
+      if (e.key === 'Alt') {
+        setIsAltPressed(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, [isPlaying, totalImages, allImagesLoaded]);
 
   // 重置缩放和位置
@@ -274,14 +320,17 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!allImagesLoaded) return;
 
-    if (scale > 1) {
-      // 放大状态下的拖拽移动
+    // 检查是否按住Alt键进行图片切换拖拽
+    const isAltDrag = e.altKey || isAltPressed;
+
+    if (scale > 1 && !isAltDrag) {
+      // 放大状态下的拖拽移动（非Alt+拖拽）
       setIsDragging(true);
       setIsImageSwitchDrag(false);
       setIsDragActive(false);
       setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
     } else {
-      // 正常状态下的图片切换拖拽
+      // 正常状态下的图片切换拖拽 或 Alt+拖拽图片切换
       setIsImageSwitchDrag(true);
       setIsDragging(false);
       setIsDragActive(true);
@@ -289,7 +338,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
       setDragProgress(0);
       setDragStartImageIndex(currentImageIndex); // 记录拖拽开始时的图片索引
     }
-  }, [scale, position, allImagesLoaded, currentImageIndex]);
+  }, [scale, position, allImagesLoaded, currentImageIndex, isAltPressed]);
 
   // 根据拖拽位置计算应该显示的图片索引
   const calculateImageIndexFromDrag = useCallback((clientX: number, containerWidth: number) => {
@@ -337,17 +386,19 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
   }, [isDragActive, calculateImageIndexFromDrag, dragStart.x, currentImageIndex, totalImages]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (isDragging && scale > 1) {
-      // 放大状态下的图片移动
+    const isAltDrag = e.altKey || isAltPressed;
+
+    if (isDragging && scale > 1 && !isAltDrag) {
+      // 放大状态下的图片移动（非Alt+拖拽）
       setPosition({
         x: e.clientX - dragStart.x,
         y: e.clientY - dragStart.y
       });
-    } else if (isImageSwitchDrag && scale <= 1) {
-      // 图片切换拖拽时实时更新图片
+    } else if (isImageSwitchDrag && (scale <= 1 || isAltDrag)) {
+      // 图片切换拖拽时实时更新图片（正常状态或Alt+拖拽）
       updateImageFromDrag(e.clientX);
     }
-  }, [isDragging, scale, dragStart, isImageSwitchDrag, updateImageFromDrag]);
+  }, [isDragging, scale, dragStart, isImageSwitchDrag, updateImageFromDrag, isAltPressed]);
 
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
@@ -440,7 +491,9 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
                 style={{ width: `${dragProgress * 100}%` }}
               />
             </div>
-            <span className="drag-text">拖拽浏览图片</span>
+            <span className="drag-text">
+              {isAltPressed && scale > 1 ? 'Alt+拖拽浏览图片' : '拖拽浏览图片'}
+            </span>
           </div>
         )}
 
@@ -457,9 +510,20 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
             className="rotary-image"
             style={{
               transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)`,
-              cursor: scale > 1
-                ? (isDragging ? 'grabbing' : 'grab')
-                : (isImageSwitchDrag ? 'grabbing' : 'grab'),
+              cursor: (() => {
+                if (scale > 1) {
+                  if (isAltPressed) {
+                    // 放大状态下按住Alt：显示图片切换光标
+                    return isImageSwitchDrag ? 'grabbing' : 'grab';
+                  } else {
+                    // 放大状态下正常：显示移动光标
+                    return isDragging ? 'grabbing' : 'grab';
+                  }
+                } else {
+                  // 正常状态：显示图片切换光标
+                  return isImageSwitchDrag ? 'grabbing' : 'grab';
+                }
+              })(),
               opacity: allImagesLoaded && currentImageInfo.loaded ? 1 : 0.5
             }}
             draggable={false}
@@ -509,7 +573,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
       </div>
 
       <div className="viewer-help">
-        <p>💡 提示：使用 ← → 键切换图片，鼠标横向拖拽实时浏览，空格键播放/暂停，R键重置缩放</p>
+        <p>💡 提示：使用 ← → 键切换图片，鼠标横向拖拽实时浏览，Alt+拖拽在放大时切换图片，Ctrl+/- 缩放，空格键播放/暂停，R键重置缩放</p>
       </div>
     </div>
   );
