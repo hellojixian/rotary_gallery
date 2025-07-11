@@ -70,6 +70,141 @@
   animation: spin 1s linear infinite;
 }
 
+/* 预加载覆盖层 */
+.preload-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(10px);
+}
+
+.preload-content {
+  text-align: center;
+  color: white;
+  max-width: 300px;
+  padding: 2rem;
+}
+
+.preload-spinner {
+  width: 60px;
+  height: 60px;
+  border: 6px solid rgba(255, 255, 255, 0.3);
+  border-top: 6px solid white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 1.5rem;
+}
+
+.preload-content h3 {
+  margin: 0 0 1.5rem 0;
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+
+.preload-progress-container {
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.preload-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #4CAF50, #8BC34A);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+}
+
+.preload-content p {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.preload-skip-hint {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.preload-skip-hint p {
+  font-size: 0.8rem;
+  opacity: 0.6;
+  color: rgba(255, 255, 255, 0.7);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.9; }
+}
+
+/* 拖拽进度提示 */
+.drag-progress-hint {
+  position: absolute;
+  top: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  z-index: 100;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: dragHintFadeIn 0.2s ease-out;
+  min-width: 200px;
+}
+
+.drag-progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.drag-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4CAF50, #8BC34A);
+  border-radius: 2px;
+  transition: width 0.1s ease-out;
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.6);
+}
+
+.drag-text {
+  white-space: nowrap;
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+@keyframes dragHintFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+}
+
 .image-error {
   display: flex;
   flex-direction: column;
@@ -134,13 +269,14 @@
 }
 
 .control-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.3;
   cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .control-btn:disabled:hover {
   transform: none;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .play-btn {
@@ -204,6 +340,58 @@
 
   .viewer-help {
     display: none;
+  }
+
+  /* 移动端预加载样式 */
+  .preload-content {
+    max-width: 280px;
+    padding: 1.5rem;
+  }
+
+  .preload-spinner {
+    width: 50px;
+    height: 50px;
+    border-width: 5px;
+    margin-bottom: 1rem;
+  }
+
+  .preload-content h3 {
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+  }
+
+  .preload-progress-container {
+    height: 6px;
+    margin-bottom: 0.75rem;
+  }
+
+  .preload-content p {
+    font-size: 0.8rem;
+  }
+
+  .preload-skip-hint {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+  }
+
+  .preload-skip-hint p {
+    font-size: 0.7rem;
+  }
+
+  /* 移动端拖拽提示优化 */
+  .drag-progress-hint {
+    top: 1rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    min-width: 150px;
+  }
+
+  .drag-progress-bar {
+    height: 3px;
+  }
+
+  .drag-text {
+    font-size: 0.7rem;
   }
 }
 

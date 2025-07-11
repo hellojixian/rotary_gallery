@@ -7,6 +7,13 @@ interface RotaryViewerProps {
   album: Album;
 }
 
+interface PreloadedImage {
+  url: string;
+  element: HTMLImageElement;
+  loaded: boolean;
+  error: boolean;
+}
+
 export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -15,8 +22,14 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [lastTouchDistance, setLastTouchDistance] = useState(0);
-  const [imageLoading, setImageLoading] = useState(true);
-  const [imageError, setImageError] = useState(false);
+  const [isImageSwitchDrag, setIsImageSwitchDrag] = useState(false);
+  const [dragProgress, setDragProgress] = useState(0); // 拖拽进度 0-1
+  const [isDragActive, setIsDragActive] = useState(false);
+
+  // 预加载相关状态
+  const [preloadedImages, setPreloadedImages] = useState<PreloadedImage[]>([]);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [allImagesLoaded, setAllImagesLoaded] = useState(false);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -25,12 +38,92 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
   const images = album.metadata.images;
   const totalImages = images.length;
 
+  // 预加载所有图片
+  useEffect(() => {
+    let isMounted = true; // 防止组件卸载后的状态更新
+
+    const preloadImages = async () => {
+      const imagePromises = images.map((imageName) => {
+        return new Promise<PreloadedImage>((resolve) => {
+          const img = new Image();
+          const url = albumsApi.getImageUrl(album.id, imageName);
+
+          const preloadedImage: PreloadedImage = {
+            url,
+            element: img,
+            loaded: false,
+            error: false
+          };
+
+          img.onload = () => {
+            if (!isMounted) return;
+            preloadedImage.loaded = true;
+            setLoadingProgress(prev => {
+              const newProgress = prev + (100 / totalImages);
+              return Math.min(newProgress, 100);
+            });
+            resolve(preloadedImage);
+          };
+
+          img.onerror = () => {
+            if (!isMounted) return;
+            preloadedImage.error = true;
+            // 尝试备用URL
+            const staticUrl = albumsApi.getStaticImageUrl(album.id, imageName);
+            const fallbackImg = new Image();
+            fallbackImg.onload = () => {
+              if (!isMounted) return;
+              preloadedImage.url = staticUrl;
+              preloadedImage.element = fallbackImg;
+              preloadedImage.loaded = true;
+              preloadedImage.error = false;
+              setLoadingProgress(prev => {
+                const newProgress = prev + (100 / totalImages);
+                return Math.min(newProgress, 100);
+              });
+              resolve(preloadedImage);
+            };
+            fallbackImg.onerror = () => {
+              if (!isMounted) return;
+              setLoadingProgress(prev => {
+                const newProgress = prev + (100 / totalImages);
+                return Math.min(newProgress, 100);
+              });
+              resolve(preloadedImage);
+            };
+            fallbackImg.src = staticUrl;
+          };
+
+          img.src = url;
+        });
+      });
+
+      const loadedImages = await Promise.all(imagePromises);
+      if (isMounted) {
+        setPreloadedImages(loadedImages);
+        setAllImagesLoaded(true);
+      }
+    };
+
+    // 重置状态
+    setLoadingProgress(0);
+    setAllImagesLoaded(false);
+    setPreloadedImages([]);
+
+    preloadImages();
+
+    // 清理函数
+    return () => {
+      isMounted = false;
+    };
+  }, [album.id, images, totalImages]);
+
   // 自动播放功能
   useEffect(() => {
-    if (isPlaying) {
+    if (isPlaying && allImagesLoaded) {
       intervalRef.current = setInterval(() => {
         setCurrentImageIndex((prev) => (prev + 1) % totalImages);
-      }, 1000);
+      }, 50);
     } else {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -43,11 +136,24 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
         clearInterval(intervalRef.current);
       }
     };
-  }, [isPlaying, totalImages]);
+  }, [isPlaying, totalImages, allImagesLoaded]);
+
+
 
   // 键盘控制
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
+      // 如果图片还没有预加载完成，只允许跳过预加载的快捷键
+      if (!allImagesLoaded) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          // 跳过预加载，直接显示第一张图片
+          setAllImagesLoaded(true);
+          setLoadingProgress(100);
+        }
+        return;
+      }
+
       switch (e.key) {
         case 'ArrowLeft':
           setCurrentImageIndex((prev) => (prev - 1 + totalImages) % totalImages);
@@ -67,7 +173,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isPlaying, totalImages]);
+  }, [isPlaying, totalImages, allImagesLoaded]);
 
   // 重置缩放和位置
   const resetZoom = useCallback(() => {
@@ -165,23 +271,79 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
 
   // 鼠标事件处理（桌面端）
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!allImagesLoaded) return;
+
     if (scale > 1) {
+      // 放大状态下的拖拽移动
       setIsDragging(true);
+      setIsImageSwitchDrag(false);
+      setIsDragActive(false);
       setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+    } else {
+      // 正常状态下的图片切换拖拽
+      setIsImageSwitchDrag(true);
+      setIsDragging(false);
+      setIsDragActive(true);
+      setDragStart({ x: e.clientX, y: e.clientY });
+      setDragProgress(0);
     }
-  }, [scale, position]);
+  }, [scale, position, allImagesLoaded]);
+
+  // 根据拖拽位置计算应该显示的图片索引
+  const calculateImageIndexFromDrag = useCallback((clientX: number, containerWidth: number) => {
+    if (!containerRef.current) return currentImageIndex;
+
+    const dragStartX = dragStart.x;
+    const deltaX = clientX - dragStartX;
+    const progress = deltaX / containerWidth;
+
+    // 计算基于拖拽的图片索引（可以是小数）
+    const draggedIndex = currentImageIndex - progress * totalImages;
+
+    // 确保索引在有效范围内，支持循环
+    let targetIndex = draggedIndex;
+    while (targetIndex < 0) targetIndex += totalImages;
+    while (targetIndex >= totalImages) targetIndex -= totalImages;
+
+    return Math.round(targetIndex) % totalImages;
+  }, [currentImageIndex, totalImages, dragStart.x]);
+
+  // 根据拖拽位置实时更新显示的图片
+  const updateImageFromDrag = useCallback((clientX: number) => {
+    if (!containerRef.current || !isDragActive) return;
+
+    const containerWidth = containerRef.current.offsetWidth;
+    const newIndex = calculateImageIndexFromDrag(clientX, containerWidth);
+
+    // 计算拖拽进度（用于视觉反馈）
+    const deltaX = clientX - dragStart.x;
+    const progress = Math.abs(deltaX) / containerWidth;
+    setDragProgress(Math.min(progress, 1));
+
+    // 实时更新图片索引
+    if (newIndex !== currentImageIndex) {
+      setCurrentImageIndex(newIndex);
+    }
+  }, [isDragActive, calculateImageIndexFromDrag, dragStart.x, currentImageIndex]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (isDragging && scale > 1) {
+      // 放大状态下的图片移动
       setPosition({
         x: e.clientX - dragStart.x,
         y: e.clientY - dragStart.y
       });
+    } else if (isImageSwitchDrag && scale <= 1) {
+      // 图片切换拖拽时实时更新图片
+      updateImageFromDrag(e.clientX);
     }
-  }, [isDragging, scale, dragStart]);
+  }, [isDragging, scale, dragStart, isImageSwitchDrag, updateImageFromDrag]);
 
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
+    setIsImageSwitchDrag(false);
+    setIsDragActive(false);
+    setDragProgress(0);
   }, []);
 
   // 滚轮缩放
@@ -196,25 +358,27 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
     }
   }, [scale]);
 
-  const currentImage = images[currentImageIndex];
-  const imageUrl = albumsApi.getImageUrl(album.id, currentImage);
+  // 获取当前图片信息
+  const getCurrentImageInfo = useCallback(() => {
+    if (!allImagesLoaded || preloadedImages.length === 0) {
+      return {
+        url: albumsApi.getImageUrl(album.id, images[currentImageIndex]),
+        loaded: false,
+        error: false,
+        element: null
+      };
+    }
 
-  // 图片加载事件处理
-  const handleImageLoad = useCallback(() => {
-    setImageLoading(false);
-    setImageError(false);
-  }, []);
+    const preloadedImage = preloadedImages[currentImageIndex];
+    return {
+      url: preloadedImage.url,
+      loaded: preloadedImage.loaded,
+      error: preloadedImage.error,
+      element: preloadedImage.element
+    };
+  }, [allImagesLoaded, preloadedImages, currentImageIndex, album.id, images]);
 
-  const handleImageError = useCallback(() => {
-    setImageLoading(false);
-    setImageError(true);
-  }, []);
-
-  // 当图片索引改变时重置加载状态
-  useEffect(() => {
-    setImageLoading(true);
-    setImageError(false);
-  }, [currentImageIndex]);
+  const currentImageInfo = getCurrentImageInfo();
 
   return (
     <div className="rotary-viewer" ref={containerRef}>
@@ -224,6 +388,26 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
           {currentImageIndex + 1} / {totalImages}
         </div>
       </div>
+
+      {/* 图片预加载进度条 */}
+      {!allImagesLoaded && (
+        <div className="preload-overlay">
+          <div className="preload-content">
+            <div className="preload-spinner"></div>
+            <h3>正在加载图片...</h3>
+            <div className="preload-progress-container">
+              <div
+                className="preload-progress-bar"
+                style={{ width: `${loadingProgress}%` }}
+              />
+            </div>
+            <p>{Math.round(loadingProgress)}% ({Math.round(loadingProgress * totalImages / 100)} / {totalImages})</p>
+            <div className="preload-skip-hint">
+              <p>按 ESC 键跳过预加载</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div
         className="image-container"
@@ -236,13 +420,20 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
       >
-        {imageLoading && (
-          <div className="image-loading">
-            <div className="loading-spinner"></div>
+        {/* 拖拽进度提示 */}
+        {isDragActive && (
+          <div className="drag-progress-hint">
+            <div className="drag-progress-bar">
+              <div
+                className="drag-progress-fill"
+                style={{ width: `${dragProgress * 100}%` }}
+              />
+            </div>
+            <span className="drag-text">拖拽浏览图片</span>
           </div>
         )}
 
-        {imageError ? (
+        {currentImageInfo.error ? (
           <div className="image-error">
             <p>图片加载失败</p>
             <button onClick={() => window.location.reload()}>重试</button>
@@ -250,16 +441,16 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
         ) : (
           <img
             ref={imageRef}
-            src={imageUrl}
+            src={currentImageInfo.url}
             alt={`${album.metadata.name} - ${currentImageIndex + 1}`}
             className="rotary-image"
             style={{
               transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)`,
-              cursor: scale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
-              opacity: imageLoading ? 0 : 1
+              cursor: scale > 1
+                ? (isDragging ? 'grabbing' : 'grab')
+                : (isImageSwitchDrag ? 'grabbing' : 'grab'),
+              opacity: allImagesLoaded && currentImageInfo.loaded ? 1 : 0.5
             }}
-            onLoad={handleImageLoad}
-            onError={handleImageError}
             draggable={false}
           />
         )}
@@ -269,6 +460,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
         <button
           onClick={() => setCurrentImageIndex((prev) => (prev - 1 + totalImages) % totalImages)}
           className="control-btn"
+          disabled={!allImagesLoaded}
         >
           ⬅️
         </button>
@@ -276,6 +468,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
         <button
           onClick={() => setIsPlaying(!isPlaying)}
           className="control-btn play-btn"
+          disabled={!allImagesLoaded}
         >
           {isPlaying ? '⏸️' : '▶️'}
         </button>
@@ -283,6 +476,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
         <button
           onClick={() => setCurrentImageIndex((prev) => (prev + 1) % totalImages)}
           className="control-btn"
+          disabled={!allImagesLoaded}
         >
           ➡️
         </button>
@@ -290,7 +484,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
         <button
           onClick={resetZoom}
           className="control-btn"
-          disabled={scale === 1 && position.x === 0 && position.y === 0}
+          disabled={!allImagesLoaded || (scale === 1 && position.x === 0 && position.y === 0)}
         >
           🔄
         </button>
@@ -304,7 +498,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
       </div>
 
       <div className="viewer-help">
-        <p>💡 提示：使用 ← → 键切换图片，空格键播放/暂停，R键重置缩放</p>
+        <p>💡 提示：使用 ← → 键切换图片，鼠标横向拖拽实时浏览，空格键播放/暂停，R键重置缩放</p>
       </div>
     </div>
   );
