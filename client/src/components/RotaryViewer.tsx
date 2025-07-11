@@ -25,6 +25,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
   const [isImageSwitchDrag, setIsImageSwitchDrag] = useState(false);
   const [dragProgress, setDragProgress] = useState(0); // 拖拽进度 0-1
   const [isDragActive, setIsDragActive] = useState(false);
+  const [dragStartImageIndex, setDragStartImageIndex] = useState(0); // 拖拽开始时的图片索引
 
   // 预加载相关状态
   const [preloadedImages, setPreloadedImages] = useState<PreloadedImage[]>([]);
@@ -286,27 +287,35 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
       setIsDragActive(true);
       setDragStart({ x: e.clientX, y: e.clientY });
       setDragProgress(0);
+      setDragStartImageIndex(currentImageIndex); // 记录拖拽开始时的图片索引
     }
-  }, [scale, position, allImagesLoaded]);
+  }, [scale, position, allImagesLoaded, currentImageIndex]);
 
   // 根据拖拽位置计算应该显示的图片索引
   const calculateImageIndexFromDrag = useCallback((clientX: number, containerWidth: number) => {
-    if (!containerRef.current) return currentImageIndex;
+    if (!containerRef.current) return dragStartImageIndex;
 
     const dragStartX = dragStart.x;
     const deltaX = clientX - dragStartX;
-    const progress = deltaX / containerWidth;
 
-    // 计算基于拖拽的图片索引（可以是小数）
-    const draggedIndex = currentImageIndex - progress * totalImages;
+    // 计算每张图片对应的像素宽度
+    const pixelsPerImage = containerWidth / totalImages;
+
+    // 计算拖拽了多少张图片的距离
+    const imagesDragged = deltaX / pixelsPerImage;
+
+    // 使用Math.round来确保只有拖拽超过半张图片宽度才切换
+    const imagesToSwitch = Math.round(imagesDragged);
+
+    // 计算目标图片索引（基于拖拽开始时的索引）
+    let targetIndex = dragStartImageIndex - imagesToSwitch;
 
     // 确保索引在有效范围内，支持循环
-    let targetIndex = draggedIndex;
     while (targetIndex < 0) targetIndex += totalImages;
     while (targetIndex >= totalImages) targetIndex -= totalImages;
 
-    return Math.round(targetIndex) % totalImages;
-  }, [currentImageIndex, totalImages, dragStart.x]);
+    return targetIndex;
+  }, [dragStartImageIndex, totalImages, dragStart.x]);
 
   // 根据拖拽位置实时更新显示的图片
   const updateImageFromDrag = useCallback((clientX: number) => {
@@ -317,14 +326,15 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
 
     // 计算拖拽进度（用于视觉反馈）
     const deltaX = clientX - dragStart.x;
-    const progress = Math.abs(deltaX) / containerWidth;
-    setDragProgress(Math.min(progress, 1));
+    const pixelsPerImage = containerWidth / totalImages;
+    const imagesDragged = Math.abs(deltaX) / pixelsPerImage;
+    setDragProgress(Math.min(imagesDragged / totalImages, 0.5)); // 最大显示50%进度
 
     // 实时更新图片索引
     if (newIndex !== currentImageIndex) {
       setCurrentImageIndex(newIndex);
     }
-  }, [isDragActive, calculateImageIndexFromDrag, dragStart.x, currentImageIndex]);
+  }, [isDragActive, calculateImageIndexFromDrag, dragStart.x, currentImageIndex, totalImages]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (isDragging && scale > 1) {
@@ -344,6 +354,7 @@ export const RotaryViewer: React.FC<RotaryViewerProps> = ({ album }) => {
     setIsImageSwitchDrag(false);
     setIsDragActive(false);
     setDragProgress(0);
+    setDragStartImageIndex(0);
   }, []);
 
   // 滚轮缩放
